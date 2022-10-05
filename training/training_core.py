@@ -125,89 +125,15 @@ def train_step(
         loss = loss + weight_penalty
         return loss, (new_state, logits)
 
-    def get_gnp_gradient(params: flax.core.frozen_dict.FrozenDict,
-                         *, r: float, alpha : float):
-        """
-            Compute the gradient where loss is added additional with gradient
-              norm penalty,
-                    L(theta) = L(theta) + ||\\nabla L(theta)||_2
-
-            See https://arxiv.org/abs/2202.03599 for more details.
-
-            Args:
-                params : the current parameters of the model.
-                r : a small scalar used for approximating the Hessian
-                  multiplication.
-                alpha :  alpha = lambda/r; lambda is the coefficient of the
-                  gradient norm penalty. In our paper, the gradient of gradient
-                  norm penalty will finally be computed by the interplotation
-                  between the gradient at the perturbed model and the gradient
-                  at the reference model.
-                           g = (1 - alpha) * g1 + alpha * g2
-                  g1 is the gradient at the reference model (theta). g2 is the
-                  gradient at the perturbed model (theta + theta'). See the
-                  paper for more detals.
-
-            Returns:
-                inner_state : the updated new state of the model based on the
-                  sample batch. 
-                logits : the predicted logit for ths sample batch.
-                g : the gradient of the loss with additional gradient norm
-                  penalty.
-        """
-        # Get the flag that whether true gradient is needed to compute.
-        true_gradient_flag = FLAGS.config.has_true_gradient
-        # Compute the gradient at the reference model for the sample batches.
-        (_, (inner_state, _)), grad = jax.value_and_grad(
-            lambda m: forward_and_loss(m, true_gradient = true_gradient_flag), has_aux=True
-            )(params)
-        # Choose to sync the grad before computing the gradient at the reference
-        # model in the second step for gradient computing.
-        if FLAGS.config.gnp.sync_perturbations:
-            grad = jax.lax.pmean(grad, 'batch')
-        grad_origial = grad
-        # Compute the dual norm.
-        grad = utli.dual_vector(grad)
-        # Get the perturbed model theta = theta + r * g1/||g1||_2
-        noised_model = jax.tree_multimap(lambda a, b: a + r * b,
-                                        params, grad)
-        # Get the gradient at the perturbed model.
-        (_, (_, logits)), grad_noised = jax.value_and_grad(
-                forward_and_loss, has_aux=True
-            )(noised_model)
-        # If this flag set true, the interplotation will be bewteen the normed
-        # gradient at the reference model and the gradient at the perturbed model.
-        if FLAGS.config.gnp.norm_perturbations:
-            g = jax.tree_multimap(lambda a, b: (1 - alpha) * a + alpha * b, grad, grad_noised)
-        else:
-            g = jax.tree_multimap(lambda a, b: (1 - alpha) * a + alpha * b, grad_origial, grad_noised)
-        return (inner_state, logits), g
-
-
     def nrs_forward_and_loss(params: flax.core.frozen_dict.FrozenDict) \
                             -> Tuple[float,
                                     Tuple[flax.core.frozen_dict.FrozenDict, jnp.ndarray]]:
 
         """
-            Compute the gradient where loss is added additional with gradient
-              norm penalty,
-                    L(theta) = L(theta) + ||\\nabla L(theta)||_2
-
-            See https://arxiv.org/abs/2202.03599 for more details.
+            Neighborhood Region Smoothing Regularization.
 
             Args:
                 params : the current parameters of the model.
-                r : a small scalar used for approximating the Hessian
-                  multiplication.
-                alpha :  alpha = lambda/r; lambda is the coefficient of the
-                  gradient norm penalty. In our paper, the gradient of gradient
-                  norm penalty will finally be computed by the interplotation
-                  between the gradient at the perturbed model and the gradient
-                  at the reference model.
-                           g = (1 - alpha) * g1 + alpha * g2
-                  g1 is the gradient at the reference model (theta). g2 is the
-                  gradient at the perturbed model (theta + theta'). See the
-                  paper for more detals.
 
             Returns:
                 inner_state : the updated new state of the model based on the
